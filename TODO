@@ -1,0 +1,14 @@
+Rewrite usage as a perldoc thing
+Colourize
+Column Justification
+Column Formats
+Tests? Things just work, right? right?
+
+Data with spaces wraps funny at 1 column. "abc def" wraps to
+a
+b
+c
+d
+e
+f
+Normally you want the space to get eaten when you wrap at a space so this might be fun. wee.
