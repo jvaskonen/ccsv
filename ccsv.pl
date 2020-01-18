@@ -12,9 +12,9 @@ use Encode::Locale;
 
 if (-t) {
     binmode(STDIN, ":encoding(console_in)");
-    binmode(STDOUT, ":encoding(console_out)");
-    binmode(STDERR, ":encoding(console_out)");
 }
+binmode STDOUT, ':utf8';
+binmode STDERR, ':utf8';
 
 my %options = parse_options();
 parse_and_print_csv();
@@ -617,7 +617,7 @@ sub read_rows {
     my $cs = qr/(?:(?<=,)|(?<=^))/mxs;
     my $ce = qr/(?=,|$)/mxs;
     my $quoted_cell = qr/$cs"(?:[^"]|"")*?"$ce/mxs;
-    my $unquoted_cell = qr/$cs(?!")[^,\n]*$ce/mxs;
+    my $unquoted_cell = qr/$cs(?!")(?:(?!$)[^,])*$ce/mxs;
     my $cell = qr/$quoted_cell|$unquoted_cell/mxs;
 
     my $empty_row = qr/^$/mxs;
@@ -727,7 +727,6 @@ sub print_rows {
                 # another loop
                 $has_unprinted_content = 1
                     if ( scalar @{ $wrapped_cell_data[$col_no] } );
-
                 # Add data for this column to the line we'll be outputting
                 push @column_slices, sprintf( "%-${width}s", $slice );
             }
@@ -768,9 +767,10 @@ sub print_separator {
 
 sub get_cell_width {
     my $cell = shift;
+    my $nl = qr/\r\n|\r|\n/mxs;
     return ( sort {$a <=> $b}           # numerical sort the ...
                   map { length }        # ... length of each line ...
-                  split "\n", $cell     # ... we split the cell into
+                  split $nl, $cell      # ... we split the cell into
            )[-1] || 0;                  # final item is length of longest line
 }
 
@@ -834,10 +834,11 @@ sub wrap_content {
     my ( $line, $wrap_length ) = @_;
     my @wrapped_lines;
     while ( length $line ) {
+        my $nl = qr/\r\n|\r|\n/mxs;
         # If there's a newline within the wrap length, wrap there
-        if ( $line =~ m/\A.{0,$wrap_length}\n/mxs ) {
+        if ( $line =~ m/\A.{0,$wrap_length}$nl/mxs ) {
             my $extracted;
-            ( $extracted, $line ) = $line =~ m/\A(.*?)\n(.*)\z/mxs;
+            ( $extracted, $line ) = $line =~ m/\A(.*?)$nl(.*)\z/mxs;
             push @wrapped_lines, $extracted;
         }
         # If our line is less than the wrap length, we're done
