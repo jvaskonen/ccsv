@@ -7,10 +7,17 @@ use English qw( -no_match_vars ) ;
 use Term::ReadKey;
 use Getopt::Long;
 use utf8;
+use Encode;
+use Encode::Locale;
+
+if (-t) {
+    binmode(STDIN, ":encoding(console_in)");
+    binmode(STDOUT, ":encoding(console_out)");
+    binmode(STDERR, ":encoding(console_out)");
+}
 
 my %options = parse_options();
 parse_and_print_csv();
-my $csv_data = join q{}, <>;
 
 sub usage {
     print << "__USAGE__";
@@ -59,37 +66,71 @@ __USAGE__
 
 sub parse_options {
     my ($wchar, $hchar, $wpixels, $hpixels) = GetTerminalSize();
-    my %opt = ( 'border'                 => 0,
-                'border-ul'              => '',
-                'border-top'             => '',
-                'border-top-x'           => '',
-                'border-ur'              => '',
-                'border-right'           => '',
-                'border-right-hx'        => '',
-                'border-right-sx'        => '',
-                'border-lr'              => '',
-                'border-bottom'          => '',
-                'border-bottom-x'        => '',
-                'border-ll'              => '',
-                'border-left'            => '',
-                'border-left-hx'         => '',
-                'border-left-sx'         => '',
-                'column-separator'       => ' | ',
-                'continue-on-error'      => 0,
-                'header'                 => 0,
-                'max-line-length'        => 1_000_000,
-                'prefetch-lines'         => 100,
-                'quiet'                  => 0,
-                'separator-intersection' => '-+-',
-                'use-color'              => 1,
-                'vertical-separator'     => '',
-                'width'                  => $wchar,
+    my %opt;
+    my %defs = ( 'border'                 => 0,
+                 'border-ul'              => '',
+                 'border-top'             => '',
+                 'border-top-x'           => '',
+                 'border-ur'              => '',
+                 'border-right'           => '',
+                 'border-right-hx'        => '',
+                 'border-right-sx'        => '',
+                 'border-lr'              => '',
+                 'border-bottom'          => '',
+                 'border-bottom-x'        => '',
+                 'border-ll'              => '',
+                 'border-left'            => '',
+                 'border-left-hx'         => '',
+                 'border-left-sx'         => '',
+                 'column-separator'       => ' | ',
+                 'continue-on-error'      => 0,
+                 'draw-row-separator'     => 0,
+                 'header'                 => 0,
+                 'max-line-length'        => 1_000_000,
+                 'prefetch-lines'         => 100,
+                 'quiet'                  => 0,
+                 'separator-intersection' => '-+-',
+                 'header-sep-intersect'   => '-+-',
+                 'use-color'              => 1,
+                 'vertical-separator'     => '-',
+                 'header-vert-sep'        => '-',
+                 'width'                  => $wchar,
               );
+    my %border_defs = ( 'border-ul'              => '┌─',
+                        'border-top'             => '─',
+                        'border-top-x'           => '─┬─',
+                        'border-ur'              => '─┒',
+                        'border-right'           => ' ┃',
+                        'border-right-hx'        => '━┫',
+                        'border-right-sx'        => '─┨',
+                        'border-lr'              => '━┛',
+                        'border-bottom'          => '━',
+                        'border-bottom-x'        => '━┷━',
+                        'border-ll'              => '┕━',
+                        'border-left'            => '│ ',
+                        'border-left-hx'         => '┝━',
+                        'border-left-sx'         => '├─',
+                        'column-separator'       => ' | ',
+                        'column-separator'       => ' │ ',
+                        'separator-intersection' => '─┼─',
+                        'header-sep-intersect'   => '━┿━',
+                        'vertical-separator'     => '─',
+                        'header-vert-sep'        => '━',
+                      );
+
+    my @string_opts = ( qw/column-separator      header-sep-intersect
+                           header-vert-sep       left-justify-columns
+                           palette               separator-intersection
+                           right-justify-columns vertical-separator
+                          /
+                      );
+
     Getopt::Long::Configure ("bundling");
     GetOptions( 'border|b'            => \$opt{'border'},
                 'colour|color|c'      => \$opt{'use-color'},
                 'csep|s=s'            => \$opt{'column-separator'},
                 'continue|t'          => \$opt{'continue-on-error'},
+                'grid|g'              => \$opt{'draw-row-separator' },
                 'header|h'            => \$opt{'header'},
                 'hsepx=s'             => \$opt{'header-sep-intersect'},
                 'hvsep=s'             => \$opt{'header-vert-sep'},
@@ -105,69 +146,47 @@ sub parse_options {
                 'width|w=i'           => \$opt{'width'},
               ) || usage();
 
+    # Getopts doesn't play nice with fancy locales so we need to cycle through
+    # the string options and encode them in whatever the console encoding is
+    foreach my $string_option ( @string_opts ) {
+        if ( defined $opt{$string_option} ) {
+            $opt{$string_option} = decode(locale => $opt{$string_option} );
+        }
+    }
+
+    # If we're using borders, fancy up the separators
+    if ( $opt{'border'} ) {
+        %defs = ( %defs,
+                  %border_defs
+                );
+    }
+
     # Print file names by default if more than one file has been specified
     if ( !defined $opt{'print-file-names'} ) {
         $opt{'print-file-names'} = ( scalar @ARGV > 1 ) ? 1 : 0;
     }
 
-    # If we're using borders, use fancy column separators
-    if ( $opt{'border'} ) {
-        binmode STDOUT, ':utf8';
-        if ( !length $opt{'border-ul'} )    { $opt{'border-ul'}    = '┌─'   }
-        if ( !length $opt{'border-top'} )   { $opt{'border-top'}   = '─'    }
-        if ( !length $opt{'border-top-x'} ) { $opt{'border-top-x'} = '─┬─'  }
-        if ( !length $opt{'border-ur'} )    { $opt{'border-ur'}    = '─┒'   }
-        if ( !length $opt{'border-right'} ) { $opt{'border-right'} = ' ┃'   }
-        if ( !length $opt{'border-right-hx'} ) {
-            $opt{'border-right-hx'} = '━┫';
-        }
-        if ( !length $opt{'border-right-sx'} ) {
-            $opt{'border-right-sx'} = '─┨';
-        }
-        if ( !length $opt{'border-lr'} )     { $opt{'border-lr'} = '━┛'    }
-        if ( !length $opt{'border-bottom'} ) { $opt{'border-bottom'} = '━' }
-        if ( !length $opt{'border-bottom-x'} ) {
-            $opt{'border-bottom-x'} = '━┷━';
-        }
-        if ( !length $opt{'border-ll' } )     { $opt{'border-ll'} = '┕━'      }
-        if ( !length $opt{'border-left'} )    { $opt{'border-left'} = '│ '     }
-        if ( !length $opt{'border-left-hx'} ) { $opt{'border-left-hx'} = '┝━' }
-        if ( !length $opt{'border-left-sx'} ) { $opt{'border-left-sx'} = '├─' }
-        if ( !length $opt{'column-separator'} ) {
-            $opt{'column-separator'} = ' | ';
-        }
-        if ( $opt{'vertical-separator'} eq '-' ) {
-            $opt{'vertical-separator'} = '─';
-        }
-        if ( $opt{'column-separator'} eq ' | ' ) {
-            $opt{'column-separator'} = ' │ ';
-        }
-        if ( $opt{'separator-intersection'} eq '-+-' ) {
-            $opt{'separator-intersection'} = '─┼─';
-        }
+    # setting the vertical separator sets it for both the row content and the
+    # header unless the header separator is set explicitly.
+    if ( !defined $opt{'header-vert-sep'}
+         && defined $opt{'vertical-separator'}
+       ) {
+        $opt{'header-vert-sep'} = $opt{'vertical-separator'};
     }
 
-    # The separator between the header and content defaults to the row
-    # separator if defined and '-' otherwise
-    if ( !defined $opt{'header-vert-sep'} ) {
-        if ( $opt{'border'} ) {
-            $opt{'header-vert-sep'} = ( length $opt{'vertical-separator'}
-                                        && $opt{'vertical-separator'} ne '─'
-                                      ) ? ( $opt{'vertical-separator'} ) : '━';
-        }
-        else {
-            $opt{'header-vert-sep'} = ( length $opt{'vertical-separator'} )
-                                      ? $opt{'vertical-separator'}
-                                      : '-';
-        }
+    # setting the separator intersection sets it for both the row content and
+    # the header unless the header separator intersection is set explicitly.
+    if ( !defined $opt{'header-sep-intersect'}
+         && defined $opt{'separator-intersection'}
+       ) {
+        $opt{'header-sep-intersect'} = $opt{'separator-intersection'};
     }
 
-    # By default, the header separator uses the same intersection string as the
-    # row separator
-    if ( !defined $opt{'header-sep-intersect'} ) {
-        $opt{'header-sep-intersect'} = ( $opt{'border'} )
-                                       ? '━┿━'
-                                       : $opt{'separator-intersection'};
+    # Apply defaults to any unset setting. Have to do this after the initial
+    # parsing because of the utf8 issues
+    foreach my $setting ( keys %defs ) {
+        $opt{$setting} = $defs{$setting}
+            unless ( defined $opt{$setting} );
     }
 
     # Have to prefetch at least one row to determine column widths
@@ -497,14 +516,21 @@ sub parse_and_print_csv {
         # Print a header row if we're doing that sort of thing
         if ( $options{'header'} ) {
             my $header_row = shift @{ $rows };
+            my ( $bl, $br, $blx, $brx ) = ( '', '', '', '' );
+            if ( $options{'border'} ) {
+                $bl  = $options{'border-left'};
+                $br  = $options{'border-right'};
+                $blx = $options{'border-left-hx'};
+                $brx = $options{'border-right-hx'};
+            }
             print_rows( [ $header_row ],
                         $options{'column-separator'},
                         $options{'header-vert-sep'},
                         $options{'header-sep-intersect'},
-                        $options{'border-left'},
-                        $options{'border-right'},
-                        $options{'border-left-hx'},
-                        $options{'border-right-hx'},
+                        $bl,
+                        $br,
+                        $blx,
+                        $brx,
                         \@allocated_widths,
                         {},
                         0
@@ -514,14 +540,24 @@ sub parse_and_print_csv {
         # Cycle through the remaining rows in this file and print them
         while ( scalar @{ $rows } ) {
             # Print the rows we already have
+            my ( $vs, $bl, $br, $blx, $brx ) = ( '', '', '', '', '' );
+            if ( $options{'border'} ) {
+                $bl  = $options{'border-left'};
+                $br  = $options{'border-right'};
+                $blx = $options{'border-left-sx'};
+                $brx = $options{'border-right-sx'};
+            }
+            if ( $options{'draw-row-separator'} ) {
+                $vs = $options{'vertical-separator'};
+            }
             print_rows( $rows,
                         $options{'column-separator'},
-                        $options{'vertical-separator'},
+                        $vs,
                         $options{'separator-intersection'},
-                        $options{'border-left'},
-                        $options{'border-right'},
-                        $options{'border-left-sx'},
-                        $options{'border-right-sx'},
+                        $bl,
+                        $br,
+                        $blx,
+                        $brx,
                         \@allocated_widths,
                         {},
                         $end_reached
