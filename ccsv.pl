@@ -10,9 +10,7 @@ use utf8;
 use Encode;
 use Encode::Locale;
 
-if (-t) {
-    binmode(STDIN, ":encoding(console_in)");
-}
+binmode(STDIN, ":encoding(console_in)");
 binmode STDOUT, ':utf8';
 binmode STDERR, ':utf8';
 
