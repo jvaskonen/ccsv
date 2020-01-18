@@ -656,7 +656,8 @@ sub read_rows {
     if ( $parse_line ne '' ) {
         my $abort_line = $NR;
         $eof_reached = 1;
-        close $ARGV;
+        close $ARGV
+            if ( $ARGV ne '-' );
         error( "End of file or maximum parse length reached without finding a "
                . "valid row starting at line $start_of_row and aborted at "
                . "line $abort_line.\n"
@@ -665,7 +666,8 @@ sub read_rows {
     elsif ( eof ) {
         # If we've reached the end of the file, close the current file to reset
         # line numbers. Pass back that info so new headers can be drawn, etc.
-        close $ARGV;
+        close $ARGV
+            if ( $ARGV ne '-' );
         $eof_reached = 1;
     }
     return (\@rows, $eof_reached);
