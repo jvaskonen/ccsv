@@ -10,9 +10,10 @@ use utf8;
 use Encode;
 use Encode::Locale;
 
-binmode(STDIN, ":encoding(console_in)");
+
 binmode STDOUT, ':utf8';
 binmode STDERR, ':utf8';
+use open IO => ':encoding(console_in)';
 
 my %options = parse_options();
 parse_and_print_csv();
