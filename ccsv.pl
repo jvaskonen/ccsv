@@ -34,7 +34,7 @@ Options:
                           Default: False
     --csep -s             String used to separate columns
                           Default: ' | '
-    --hvsep               String to be repeated and used as a separator between
+    --hsep                String to be repeated and used as a separator between
                           the header and data rows.
                           Default: Equal to vsep if defined, otherwise '-'
     --hsepx               String to be used between columns in the header
@@ -53,11 +53,11 @@ Options:
                           Default: True if more than one file specified
     --quiet -q            Supress error messages
                           Default: false
-    --sepx -x             String used between columns on a separator row
-                          Default: '-+-'
-    --vsep -v             String to be repeated and used as a separator between
+    --rsep -v             String to be repeated and used as a separator between
                           rows.
                           Default: row separation off
+    --sepx -x             String used between columns on a separator row
+                          Default: '-+-'
     --width -w            Width to wrap the output to
                           Default: terminal width
 __USAGE__
@@ -89,11 +89,11 @@ sub parse_options {
                  'max-line-length'        => 1_000_000,
                  'prefetch-lines'         => 100,
                  'quiet'                  => 0,
-                 'separator-intersection' => '-+-',
-                 'header-sep-intersect'   => '-+-',
+                 'row-separator'          => '-',
+                 'separator-x'            => '-+-',
+                 'header-separator-x'     => '-+-',
                  'use-color'              => 1,
-                 'vertical-separator'     => '-',
-                 'header-vert-sep'        => '-',
+                 'header-separator'       => '-',
                  'width'                  => $wchar,
               );
     my %border_defs = ( 'border-ul'              => '┌─',
@@ -112,16 +112,16 @@ sub parse_options {
                         'border-left-sx'         => '├─',
                         'column-separator'       => ' | ',
                         'column-separator'       => ' │ ',
-                        'separator-intersection' => '─┼─',
-                        'header-sep-intersect'   => '━┿━',
-                        'vertical-separator'     => '─',
-                        'header-vert-sep'        => '━',
+                        'separator-x'            => '─┼─',
+                        'header-separator-x'     => '━┿━',
+                        'header-separator'       => '━',
+                        'row-separator'          => '─',
                       );
 
-    my @string_opts = ( qw/column-separator      header-sep-intersect
-                           header-vert-sep       left-justify-columns
-                           palette               separator-intersection
-                           right-justify-columns vertical-separator
+    my @string_opts = ( qw/column-separator      header-separator-x
+                           header-separator      left-justify-columns
+                           palette               separator-x
+                           right-justify-columns row-separator
                           /
                       );
 
@@ -132,17 +132,17 @@ sub parse_options {
                 'continue|t'          => \$opt{'continue-on-error'},
                 'grid|g'              => \$opt{'draw-row-separator' },
                 'header|h'            => \$opt{'header'},
-                'hsepx=s'             => \$opt{'header-sep-intersect'},
-                'hvsep=s'             => \$opt{'header-vert-sep'},
+                'hsepx=s'             => \$opt{'header-separator-x'},
+                'hsep=s'              => \$opt{'header-separator'},
                 'left|l=s'            => \$opt{'left-justify-columns'},
                 'max-line-length|m=i' => \$opt{'max-line-length'},
                 'print-file-names|n'  => \$opt{'print-file-names'},
                 'palette|p=s'         => \$opt{'palette'},
                 'prefetch=i'          => \$opt{'prefetch-lines'},
-                'sepx|x=s'            => \$opt{'separator-intersection'},
+                'rsep|v=s'            => \$opt{'row-separator'},
+                'sepx|x=s'            => \$opt{'separator-x'},
                 'quiet|q'             => \$opt{'quiet'},
                 'right|r=s'           => \$opt{'right-justify-columns'},
-                'vsep|v=s'            => \$opt{'vertical-separator'},
                 'width|w=i'           => \$opt{'width'},
               ) || usage();
 
@@ -168,18 +168,18 @@ sub parse_options {
 
     # setting the vertical separator sets it for both the row content and the
     # header unless the header separator is set explicitly.
-    if ( !defined $opt{'header-vert-sep'}
-         && defined $opt{'vertical-separator'}
+    if ( !defined $opt{'header-separator'}
+         && defined $opt{'row-separator'}
        ) {
-        $opt{'header-vert-sep'} = $opt{'vertical-separator'};
+        $opt{'header-separator'} = $opt{'row-separator'};
     }
 
     # setting the separator intersection sets it for both the row content and
     # the header unless the header separator intersection is set explicitly.
-    if ( !defined $opt{'header-sep-intersect'}
-         && defined $opt{'separator-intersection'}
+    if ( !defined $opt{'header-separator-x'}
+         && defined $opt{'separator-x'}
        ) {
-        $opt{'header-sep-intersect'} = $opt{'separator-intersection'};
+        $opt{'header-separator-x'} = $opt{'separator-x'};
     }
 
     # Apply defaults to any unset setting. Have to do this after the initial
@@ -525,8 +525,8 @@ sub parse_and_print_csv {
             }
             print_rows( [ $header_row ],
                         $options{'column-separator'},
-                        $options{'header-vert-sep'},
-                        $options{'header-sep-intersect'},
+                        $options{'header-separator'},
+                        $options{'header-separator-x'},
                         $bl,
                         $br,
                         $blx,
@@ -548,12 +548,12 @@ sub parse_and_print_csv {
                 $brx = $options{'border-right-sx'};
             }
             if ( $options{'draw-row-separator'} ) {
-                $vs = $options{'vertical-separator'};
+                $vs = $options{'row-separator'};
             }
             print_rows( $rows,
                         $options{'column-separator'},
                         $vs,
-                        $options{'separator-intersection'},
+                        $options{'separator-x'},
                         $bl,
                         $br,
                         $blx,
