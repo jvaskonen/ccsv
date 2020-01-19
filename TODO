@@ -3,7 +3,6 @@ Colourize
 Column Justification
 Column Formats
 Tests? Things just work, right? right?
-
 support for tsv and other arbitrary delimiters
 load default config from file(s)
 force width even when data isn't wide

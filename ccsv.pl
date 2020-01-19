@@ -43,7 +43,12 @@ Options:
     --hsepx               String to be used between columns in the header
                           separator row.
                           Default: Equal to sepx
-    --max-line-length -m  Abort parsing a csv if the line length exceeds the
+    --margin -m           Set the left and right column marigns
+    --margin-left         Set the left column margin
+                          Default: 1
+    --margin-right        Set the right column margin
+                          Default: 1
+    --max-line-length -o  Abort parsing a csv if the line length exceeds the
                           specified value.
                           Default: 1,000,000
     --prefetch -p         The number of rows to fetch before starting to dispay
@@ -89,6 +94,8 @@ sub parse_options {
                  'continue-on-error'      => 0,
                  'draw-row-separator'     => 0,
                  'header'                 => 0,
+                 'margin-left'            => 1,
+                 'margin-right'           => 1,
                  'max-line-length'        => 1_000_000,
                  'prefetch-lines'         => 100,
                  'quiet'                  => 0,
@@ -138,8 +145,11 @@ sub parse_options {
                 'hsepx=s'             => \$opt{'header-separator-x'},
                 'hsep=s'              => \$opt{'header-separator'},
                 'left|l=s'            => \$opt{'left-justify-columns'},
-                'max-line-length|m=i' => \$opt{'max-line-length'},
-                'print-file-names|f'  => \$opt{'print-file-names'},
+                'margin|m=i'          => \$opt{'margin'},
+                'margin-left=i'       => \$opt{'margin-left'},
+                'margin-right=i'      => \$opt{'margin-right'},
+                'max-line-length|o=i' => \$opt{'max-line-length'},
+                'print-file-names|f!' => \$opt{'print-file-names'},
                 'palette|p=s'         => \$opt{'palette'},
                 'prefetch=i'          => \$opt{'prefetch-lines'},
                 'rsep|v=s'            => \$opt{'row-separator'},
@@ -162,6 +172,14 @@ sub parse_options {
         %defs = ( %defs,
                   %border_defs
                 );
+    }
+
+    # Set margin-left/right if they are unset and margin is
+    if ( defined $opt{'margin'} ) {
+        for my $side ( qw/left right/ ) {
+            $opt{"margin-$side"} = $opt{'margin'}
+                if ( !defined $opt{"margin-$side"} );
+        }
     }
 
     # Print file names by default if more than one file has been specified
@@ -476,6 +494,10 @@ sub parse_and_print_csv {
         my $sep_length = screen_length( $options{'column-separator'} );
         my $writeable_space = $options{'width'}
                               - ( scalar @column_widths - 1 ) * $sep_length
+                              - scalar @column_widths
+                                * ( $options{'margin-left'}
+                                    + $options{'margin-right'}
+                                  )
                               - screen_length( $options{'border-left'} )
                               - screen_length( $options{'border-right'} );
         if ( $writeable_space < scalar @column_widths ) {
@@ -493,6 +515,10 @@ sub parse_and_print_csv {
                 $total_width += $width;
             }
             $total_width += ( $sep_length * ( scalar @allocated_widths - 1 )
+                              + scalar @column_widths
+                                * ( $options{'margin-left'}
+                                    + $options{'margin-right'}
+                                  )
                               + screen_length( $options{'border-left'} )
                               + screen_length( $options{'border-right'} )
                             );
@@ -724,6 +750,12 @@ sub print_rows {
             for my $col_no ( 0 .. $#{ $column_widths } ) {
                 my $width = $column_widths->[$col_no];
                 my $slice;
+                my $is_right_just = get_justification( $col_no, $slice );
+                # Make a copy of the margins because in some circumstances we need
+                # to step on them
+                my %m = ( 'left'  => $options{'margin-left'},
+                          'right' => $options{'margin-right'},
+                        );
 
                 # Get the next line of content for this column
                 $slice = shift @{ $wrapped_cell_data[$col_no] } || '';
@@ -736,19 +768,42 @@ sub print_rows {
                 # Pad the data with enough whitespace to make it the proper
                 # length
                 my $pad_len = $width - screen_length( $slice );
+
                 if ( $pad_len < 0 ) {
                     # This happen if we're trying to dump a double-wide
                     # character into a cell that is one wide
-                    error( 'Double-width character found in a column that is'
+                    error( 'Double-width character found in a column that is '
                            . "a single character wide\n",
                            0
                          );
+                    # spill over into the margin if there is margin. Eat the
+                    # margin opposite the justification first, then start
+                    # eating from the other side. If there's not enough margin
+                    # then people will just have to deal with broken grid lines
+                    my ( $same, $opp ) = ( ($is_right_just ? 'right' : 'left'),
+                                           $is_right_just ? 'left' : 'right'
+                                         );
+                    if ( $pad_len + $m{$opp} >= 0 ) {
+                        $m{$opp} = $pad_len + $m{$opp};
+                    }
+                    elsif ( $pad_len + $m{$opp} + $m{$same} >= 0) {
+                        $m{$same} = $pad_len + $m{$opp} + $m{$same};
+                        $m{$opp} = 0;
+                    }
+                    else {
+                        $m{$opp} = 0;
+                        $m{$same} = 0;
+                    }
                     $pad_len = 0;
                 }
+
                 # Add data for this column to the line we'll be outputting
-                push @column_slices, get_justification($col_no, $slice)
-                                     ? ' ' x $pad_len . $slice
-                                     : $slice . ' ' x $pad_len;
+                push @column_slices, ' ' x $m{'left'}
+                                     . ( $is_right_just
+                                         ? ' ' x $pad_len . $slice
+                                         : $slice . ' ' x $pad_len
+                                       )
+                                     . ' ' x $m{'right'};
             }
             # print the line
             print $bl . join( $h_sep, @column_slices ) . "$br\n";
@@ -770,6 +825,7 @@ sub get_justification {
     my ( $column, $content ) = @_;
     return 0;
 }
+
 sub print_separator {
     my ( $l, $sep, $sep_x, $r, $col_widths, $palette ) = @_;
 
@@ -778,7 +834,10 @@ sub print_separator {
           join( $sep_x,
                 map { # Repeat $sep enough to fill the column then trim it to
                       # the column width
-                      my $col_width = $_;
+                      my $col_width
+                          = $_
+                          + $options{'margin-left'}
+                          + $options{'margin-right'};
                       my $repeats = int($col_width / $sep_length)+1;
                       my ( $sep_field )
                           = ($sep x $repeats) =~ m/(.{$col_width})/mxs;
