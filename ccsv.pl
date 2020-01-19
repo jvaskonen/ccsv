@@ -884,7 +884,7 @@ sub wrap_content {
                  .(?{ local $CNT = $CNT + 2; })| # Yes? Bump $CNT by 2
                  .(?{ local $CNT = $CNT + 1; })  # Otherwise by 1
              )+   # Match as much as we can, but at least one
-             (?(?{ $CNT < $wrap_length; }) # Length less than the wrap length?
+             (?(?{ $CNT <= $wrap_length; }) # Length less than the wrap length?
                  (?=.)|    # If so, any character is ok.
                  (?=A)B    # If not, we'll only be satisfied with an impossible
                            # next character. This will force a backtrack of one
@@ -898,7 +898,7 @@ sub wrap_content {
                  .(?{ local $CNT = $CNT + 2; })| # Yes? Bump $CNT by 2
                  .(?{ local $CNT = $CNT + 1; })  # Otherwise by 1
              )+?   # Match as little as we can, but at least one
-             (?(?{ $CNT < $wrap_length; }) # Length less than the wrap length?
+             (?(?{ $CNT <= $wrap_length; }) # Length less than the wrap length?
                  (?=.)|    # If so, any character is ok.
                  (?=A)B    # If not, nothing is ok. Same as in the greedy land.
              )
