@@ -494,7 +494,7 @@ sub parse_and_print_csv {
         my $sep_length = screen_length( $options{'column-separator'} );
         my $writeable_space = $options{'width'}
                               - ( scalar @column_widths - 1 ) * $sep_length
-                              - scalar @column_widths
+                              - ( scalar @column_widths )
                                 * ( $options{'margin-left'}
                                     + $options{'margin-right'}
                                   )
@@ -515,7 +515,7 @@ sub parse_and_print_csv {
                 $total_width += $width;
             }
             $total_width += ( $sep_length * ( scalar @allocated_widths - 1 )
-                              + scalar @column_widths
+                              + ( scalar @column_widths )
                                 * ( $options{'margin-left'}
                                     + $options{'margin-right'}
                                   )
@@ -614,6 +614,15 @@ sub parse_and_print_csv {
 
                     # Reallocate column widths
                     @column_widths = get_column_widths($rows);
+                    $writeable_space
+                        = $options{'width'}
+                          - ( scalar @column_widths - 1 ) * $sep_length
+                          - ( scalar @column_widths )
+                            * ( $options{'margin-left'}
+                                + $options{'margin-right'}
+                              )
+                          - screen_length( $options{'border-left'} )
+                          - screen_length( $options{'border-right'} );
                     @allocated_widths
                         = allocate_column_widths( $writeable_space,
                                                   @column_widths
@@ -876,41 +885,31 @@ sub get_column_widths {
 }
 
 sub allocate_column_widths {
-    my ( $total_width, @column_sizes ) = @_;
-    use YAML;
+    my ( $total_scr_width, @column_sizes ) = @_;
     my $remaining_columns = scalar @column_sizes || 1;
+    my @allocated_widths = map { 0 } @column_sizes;
 
-    my @allocated_widths = map { undef } @column_sizes;
-
-    # first pass, find the cells that need less than 1/Nth the space
-    # where N is the number of columns.
-    # On subsequent passes, give the space not used by a column back
-    # and see if that's enough. If so, remove that one.
-    # lather rinse repeat. Anything that's still too big gets its cut
-    # of the remaining space
-    my $fair_width = $total_width / $remaining_columns;
-    my $last_fair = -1;
+    # Dish out the available width one cell at a time until all the available
+    # space is used up. Stop distributing space to columns if we reach the
+    # length of their longest data
     my $total_allocated = 0;
-    while ( $fair_width != $last_fair && $remaining_columns > 0) {
-        my $col_no = 0;
-        foreach my $colsize ( @column_sizes ) {
-            if ( !defined $allocated_widths[$col_no]
-                 && $colsize <= $fair_width
+    while ( $total_allocated < $total_scr_width ) {
+        my $made_adjustments = 0;
+        foreach my $col_no ( 0 .. $#column_sizes ) {
+            if ( $total_allocated < $total_scr_width
+                 && $allocated_widths[$col_no] < $column_sizes[$col_no]
                ) {
-                $allocated_widths[$col_no] = $colsize;
-                $total_allocated += $colsize;
-                $remaining_columns--;
+                $allocated_widths[$col_no]++;
+                $total_allocated++;
+                $made_adjustments++;
             }
-            $col_no++;
+            # If we didn't make any changes, nothing is looking for room, so
+            # break outta here
         }
-        if ( $remaining_columns > 0 ) {
-            $last_fair = $fair_width;
-            $fair_width = ($total_width - $total_allocated)
-                          / $remaining_columns;
-        }
+        last if ( !$made_adjustments );
     }
 
-    return map { defined $_ ? $_ : int $fair_width } @allocated_widths;
+    return @allocated_widths;
 }
 
 sub screen_length {
