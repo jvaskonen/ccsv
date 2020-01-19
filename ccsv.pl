@@ -10,10 +10,14 @@ use utf8;
 use Encode;
 use Encode::Locale;
 
-
 binmode STDOUT, ':utf8';
 binmode STDERR, ':utf8';
-use open IO => ':encoding(console_in)';
+binmode STDIN, ':encoding(console_in)';
+use open IN => ':encoding(console_in)';
+
+# local is needed for counting to work properly through backtracking
+# so we need a global variable to localize
+our $CNT;
 
 my %options = parse_options();
 parse_and_print_csv();
@@ -469,11 +473,11 @@ sub parse_and_print_csv {
         my @column_widths = get_column_widths($rows);
 
         # Allocate widths to the columns leaving room for the field separators
-        my $sep_length = length $options{'column-separator'};
+        my $sep_length = screen_length( $options{'column-separator'} );
         my $writeable_space = $options{'width'}
                               - ( scalar @column_widths - 1 ) * $sep_length
-                              - length( $options{'border-left'} )
-                              - length( $options{'border-right'} );
+                              - screen_length( $options{'border-left'} )
+                              - screen_length( $options{'border-right'} );
         if ( $writeable_space < scalar @column_widths ) {
             error("Width too narrow to display data\n");
             error("Adjusting to minimum of 1 character per column\n", 0);
@@ -489,8 +493,8 @@ sub parse_and_print_csv {
                 $total_width += $width;
             }
             $total_width += ( $sep_length * ( scalar @allocated_widths - 1 )
-                              + length( $options{'border-left'} )
-                              + length( $options{'border-right'} )
+                              + screen_length( $options{'border-left'} )
+                              + screen_length( $options{'border-right'} )
                             );
             my $fn_length = length $ARGV;
             my $pad_length = ( $total_width / 2 - $fn_length / 2 );
@@ -728,8 +732,23 @@ sub print_rows {
                 # another loop
                 $has_unprinted_content = 1
                     if ( scalar @{ $wrapped_cell_data[$col_no] } );
+
+                # Pad the data with enough whitespace to make it the proper
+                # length
+                my $pad_len = $width - screen_length( $slice );
+                if ( $pad_len < 0 ) {
+                    # This happen if we're trying to dump a double-wide
+                    # character into a cell that is one wide
+                    error( 'Double-width character found in a column that is'
+                           . "a single character wide\n",
+                           0
+                         );
+                    $pad_len = 0;
+                }
                 # Add data for this column to the line we'll be outputting
-                push @column_slices, sprintf( "%-${width}s", $slice );
+                push @column_slices, get_justification($col_no, $slice)
+                                     ? ' ' x $pad_len . $slice
+                                     : $slice . ' ' x $pad_len;
             }
             # print the line
             print $bl . join( $h_sep, @column_slices ) . "$br\n";
@@ -747,10 +766,14 @@ sub print_rows {
     return;
 }
 
+sub get_justification {
+    my ( $column, $content ) = @_;
+    return 0;
+}
 sub print_separator {
     my ( $l, $sep, $sep_x, $r, $col_widths, $palette ) = @_;
 
-    my $sep_length = length $sep;
+    my $sep_length = screen_length( $sep );
     print $l .
           join( $sep_x,
                 map { # Repeat $sep enough to fill the column then trim it to
@@ -769,10 +792,10 @@ sub print_separator {
 sub get_cell_width {
     my $cell = shift;
     my $nl = qr/\r\n|\r|\n/mxs;
-    return ( sort {$a <=> $b}           # numerical sort the ...
-                  map { length }        # ... length of each line ...
-                  split $nl, $cell      # ... we split the cell into
-           )[-1] || 0;                  # final item is length of longest line
+    return ( sort {$a <=> $b}               # numerical sort the ...
+                  map { screen_length($_) } # ... length of each line ...
+                  split $nl, $cell          # ... we split the cell into
+           )[-1] || 0;                      # final item is length of longest line
 }
 
 sub get_column_widths {
@@ -831,33 +854,92 @@ sub allocate_column_widths {
     return map { defined $_ ? $_ : int $fair_width } @allocated_widths;
 }
 
+sub screen_length {
+    my $string = shift @_;
+    my $length = 0;
+
+    # We need to count how wide this string will be on screen
+    $string =~
+        m/^(?{ local $CNT = 0; })
+          (?(?=\p{East_Asian_Width: W})     # If we have a wide asian character
+            .(?{ local $CNT = $CNT + 2; })  # Increase the length by 2
+            |.(?{ local $CNT = $CNT + 1; }) # Otherwise by 1
+          )*?$                              # repeat for entire string
+          (?{ $length = $CNT; })  # save the final value to our length
+         /mxs;
+    return $length;
+}
+
 sub wrap_content {
     my ( $line, $wrap_length ) = @_;
     my @wrapped_lines;
+
+    # So, we need a regular expression that matches text capped at the column
+    # width. This is complicated due to double-width characters which prevent
+    # us from just grapping up to $wrap_length characters. We actually need it
+    # in both greedy and non-greedy form.
+    my $up_to_max_greedy
+        = qr/\A(?{ local $CNT = 0; })  # $CNT keeps track of the printed length
+             (?(?=\p{East_Asian_Width: W})       # Wide asian character?
+                 .(?{ local $CNT = $CNT + 2; })| # Yes? Bump $CNT by 2
+                 .(?{ local $CNT = $CNT + 1; })  # Otherwise by 1
+             )+   # Match as much as we can, but at least one
+             (?(?{ $CNT < $wrap_length; }) # Length less than the wrap length?
+                 (?=.)|    # If so, any character is ok.
+                 (?=A)B    # If not, we'll only be satisfied with an impossible
+                           # next character. This will force a backtrack of one
+                           # which will decrement the $CNT appropriately due to
+                           # the 'local' magic.
+             )
+            /mxs;
+    my $up_to_max_sparse
+        = qr/\A(?{ local $CNT = 0; })  # $CNT keeps track of the printed length
+             (?(?=\p{East_Asian_Width: W})       # Wide asian character?
+                 .(?{ local $CNT = $CNT + 2; })| # Yes? Bump $CNT by 2
+                 .(?{ local $CNT = $CNT + 1; })  # Otherwise by 1
+             )+?   # Match as little as we can, but at least one
+             (?(?{ $CNT < $wrap_length; }) # Length less than the wrap length?
+                 (?=.)|    # If so, any character is ok.
+                 (?=A)B    # If not, nothing is ok. Same as in the greedy land.
+             )
+            /mxs;
+
     while ( length $line ) {
         my $nl = qr/\r\n|\r|\n/mxs;
+        my $extracted;
+
         # If there's a newline within the wrap length, wrap there
-        if ( $line =~ m/\A.{0,$wrap_length}$nl/mxs ) {
-            my $extracted;
-            ( $extracted, $line ) = $line =~ m/\A(.*?)$nl(.*)\z/mxs;
+        if ( $line =~ m/$up_to_max_sparse$nl/mxs ) {
+            ( $extracted, $line )
+                = $line =~ m/($up_to_max_sparse)$nl(.*)\z/mxs;
             push @wrapped_lines, $extracted;
         }
         # If our line is less than the wrap length, we're done
-        elsif ( length $line <= $wrap_length ) {
+        elsif ( screen_length( $line ) <= $wrap_length ) {
             chomp $line;
             push @wrapped_lines, $line;
             $line = '';
         }
         # If there's whitespace within the wrap length, wrap at the last
-        elsif ( $line =~ m/\A.{0,$wrap_length}\s/mxs ) {
-            my $extracted;
-            ( $extracted, $line ) = $line =~ m/\A(.{0,$wrap_length})\s(.*)\z/mxs;
+        elsif ( $line =~ m/$up_to_max_greedy\s/mxs ) {
+            ( $extracted, $line ) = $line =~ m/($up_to_max_greedy)\s(.*)\z/mxs;
             push @wrapped_lines, $extracted;
         }
-        # Otherwise just chomp off the first wrap length characters
+        # Otherwise try to just chomp stuff off up to the wrap length
+        elsif ( $line =~ m/$up_to_max_greedy/mxs ) {
+            ( $extracted, $line ) = $line =~ m/($up_to_max_greedy)(.*)\z/mxs;
+            push @wrapped_lines, $extracted;
+
+            # If we have a single width column, we don't want to eat that last
+            # space, otherwise words bleed together in the output.
+            push @wrapped_lines, ' '
+                if ( $wrap_length == 1 );
+        }
+        # We only get here if the column is too narrow to fix the next
+        # character. In this case, just grab and return a single character and
+        # deal with it in error handling of the parent function
         else {
-            my $extracted;
-            ( $extracted, $line ) = $line =~ m/\A(.{$wrap_length})(.*)\z/mxs;
+            ( $extracted, $line ) = $line =~ m/(.)(.*)\z/mxs;
             push @wrapped_lines, $extracted;
         }
     }

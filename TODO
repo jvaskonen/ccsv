@@ -3,18 +3,9 @@ Colourize
 Column Justification
 Column Formats
 Tests? Things just work, right? right?
-utf8 data probably doesn't wrap right
+
 support for tsv and other arbitrary delimiters
 load default config from file(s)
 force width even when data isn't wide
 add border string customization into getopt
 display a slice of a csv rather than the whole thing
-
-Data with spaces wraps funny at 1 column. "abc def" wraps to
-a
-b
-c
-d
-e
-f
-Normally you want the space to get eaten when you wrap at a space so this might be fun. wee.
