@@ -890,11 +890,15 @@ sub allocate_column_widths {
 
     # Dish out the available width one cell at a time until all the available
     # space is used up. Stop distributing space to columns if we reach the
-    # length of their longest data
+    # length of their longest data. Distribute space in order of desired column
+    # length, longest first. That way if there's not an even split, the longest
+    # columns will get the space.
     my $total_allocated = 0;
+    my @column_order = sort { $column_sizes[$b] <=> $column_sizes[$a] }
+                            ( 0 .. $#column_sizes );
     while ( $total_allocated < $total_scr_width ) {
         my $made_adjustments = 0;
-        foreach my $col_no ( 0 .. $#column_sizes ) {
+        foreach my $col_no ( @column_order ) {
             if ( $total_allocated < $total_scr_width
                  && $allocated_widths[$col_no] < $column_sizes[$col_no]
                ) {
