@@ -15,7 +15,7 @@ binmode STDERR, ':utf8';
 binmode STDIN, ':encoding(console_in)';
 use open IN => ':encoding(console_in)';
 
-# local is needed for counting to work properly through backtracking
+# local is needed for counting to work properly through regex backtracking...
 # so we need a global variable to localize
 our $CNT;
 
@@ -51,7 +51,29 @@ Options:
     --max-line-length -o  Abort parsing a csv if the line length exceeds the
                           specified value.
                           Default: 1,000,000
-    --prefetch -p         The number of rows to fetch before starting to dispay
+    --palette -p          Format is <item1>=<colour1>_<format>[,<item2>=...]
+                          There is an *-fg and *-bg for each of the following:
+                              border    column-separator     content-border
+                              content-column-separator-bg    content-even-row
+                              content-odd-row   file-label   header
+                              header-border     header-column-separator
+                              header-separator  header-separator-border
+                              row-separator
+                          border-* and column-separator-* are shortcuts to
+                          setting all items of that type in one go.
+
+                          Valid colours are:
+                              * integers between 0 and 255,
+                              * xterm256 colour names as defined at:
+                                https://github.com/jonasjacek/colors
+                              * semicolon separated RGB values, i.e. 200;42;37
+                          Valid formats characters are: b (bold), i (italic),
+                          l (blink), s (strikethrough) and u (underline). Not
+                          all formats are implemented by all terminals.
+
+                          Example: -p'header-fg=blue_b' sets the header text to
+                          be bold blue
+    --prefetch -t         The number of rows to fetch before starting to dispay
                           output. Column widths will be allocated based on the
                           data in those rows. If the column count subsequently
                           changes, this number of rows will again be fetched
@@ -74,7 +96,7 @@ __USAGE__
 
 sub parse_options {
     my ($wchar, $hchar, $wpixels, $hpixels) = GetTerminalSize();
-    my %opt;
+    my %opt = ( 'colours' => {} );
     my %defs = ( 'border'                 => 0,
                  'border-ul'              => '',
                  'border-top'             => '',
@@ -90,19 +112,21 @@ sub parse_options {
                  'border-left'            => '',
                  'border-left-hx'         => '',
                  'border-left-sx'         => '',
+                 'colours'                => {},
                  'column-separator'       => '|',
                  'continue-on-error'      => 0,
+                 'draw-header-separator'  => 0,
                  'draw-row-separator'     => 0,
                  'header'                 => 0,
                  'header-separator-x'     => '+',
                  'margin-left'            => 1,
                  'margin-right'           => 1,
                  'max-line-length'        => 1_000_000,
+                 'palette'                => '',
                  'prefetch-lines'         => 100,
                  'quiet'                  => 0,
                  'row-separator'          => '-',
                  'separator-x'            => '+',
-                 'use-colour'             => 1,
                  'header-separator'       => '-',
                  'width'                  => $wchar,
               );
@@ -126,6 +150,42 @@ sub parse_options {
                         'row-separator'          => '─',
                         'separator-x'            => '┼',
                       );
+    my %color_defs = ( 'border-bg'                   => 300,
+                       'border-fg'                   => 300,
+                       'column-separator-bg'         => 300,
+                       'column-separator-fg'         => 300,
+                       'content-border-bg'           => 0,
+                       'content-border-fg'           => 7,
+                       'content-column-separator-bg' => 0,
+                       'content-column-separator-fg' => 7,
+                       'content-even-row-bg'         => 0,
+                       'content-even-row-fg'         => 6,
+                       'content-odd-row-bg'          => 0,
+                       'content-odd-row-fg'          => 7,
+                       'file-label-bg'               => 4,
+                       'file-label-fg'               => 15,
+                       'header-bg'                   => 7,
+                       'header-fg'                   => 0,
+                       'header-border-bg'            => 0,
+                       'header-border-fg'            => 7,
+                       'header-column-separator-bg'  => 7,
+                       'header-column-separator-fg'  => 0,
+                       'header-separator-bg'         => 0,
+                       'header-separator-fg'         => 7,
+                       'header-separator-border-bg'  => 0,
+                       'header-separator-border-fg'  => 7,
+                       'row-separator-bg'            => 0,
+                       'row-separator-fg'            => 7,
+                     );
+    my %fancy_defs = ( %color_defs,
+                       'content-even-row-bg'         => 236,
+                       'content-even-row-fg'         => 7,
+                       'header-bg'                   => 70,
+                       'header-fg'                   => '16_b',
+                       'file-label-fg'               => '255_b',
+                       'header-column-separator-bg'  => 0,
+                       'header-column-separator-fg'  => 7,
+                     );
 
     my @string_opts = ( qw/column-separator      header-separator-x
                            header-separator      left-justify-columns
@@ -150,7 +210,7 @@ sub parse_options {
                 'max-line-length|o=i' => \$opt{'max-line-length'},
                 'print-file-names|f!' => \$opt{'print-file-names'},
                 'palette|p=s'         => \$opt{'palette'},
-                'prefetch=i'          => \$opt{'prefetch-lines'},
+                'prefetch|t=i'        => \$opt{'prefetch-lines'},
                 'rsep|v=s'            => \$opt{'row-separator'},
                 'sepx|x=s'            => \$opt{'separator-x'},
                 'quiet|q'             => \$opt{'quiet'},
@@ -164,6 +224,111 @@ sub parse_options {
         if ( defined $opt{$string_option} ) {
             $opt{$string_option} = decode(locale => $opt{$string_option} );
         }
+    }
+
+    # Deal with colours
+    $opt{'colours'}{'colour-reset'}
+        = ( !defined $opt{'use-colour'} || $opt{'use-colour'} )
+          ? "\x1b\x5b0m"
+          : '';
+
+    my %default_palette = $opt{'border'} ? %fancy_defs : %color_defs;
+    # Parse and apply user settings. Ignore if we have colour turned off.
+    # No defaults applied yet, so use-colour is only defined if it showed up in
+    # the options list.
+    if ( defined $opt{'palette'}
+         && ( !defined $opt{'use-colour'}
+              || $opt{'use-colour'}
+            )
+       ) {
+        # Palette format is Thing_to_color1=Color1,Thing_to_color2=Color2
+        # do an initial sanity check
+        unless ( $opt{'palette'} =~ m/\A[\w\d-]+=[\w\d;]+
+                                      (,[\w\d-]+=[\w\d;]+)*\z
+                                     /mxs
+               ) {
+            print STDERR "Could not parse --palette option\n\n";
+            usage();
+        }
+
+        # Hashify the palette option
+        my %attempted_palette = map { split '=' }
+                                      split ',', $opt{'palette'};
+
+        # Border-* is shorthand for header-border-* + content-border-*
+        # Same goes for column-separator-*
+        for my $alias_stem ( qw/column-separator border/ ) {
+            foreach my $fgbg ( qw/fg bg/ ) {
+                my $alias_opt = "$alias_stem-$fgbg";
+                if ( defined $attempted_palette{$alias_opt} ) {
+                    my $setting = delete $attempted_palette{$alias_opt};
+                    foreach my $mapto ( qw/header content header-separator/ ) {
+                        # don't try to set non-existent options
+                        my $realname = "$mapto-$alias_opt";
+                        if ( defined $default_palette{$realname} ) {
+                            print "$realname => $setting\n";
+                            $attempted_palette{"$realname"} = $setting;
+                        }
+                    }
+                }
+            }
+        }
+
+        # Cycle through the stuff we're trying to set colours for
+        foreach my $col_prop ( keys %attempted_palette ) {
+            # See if we're setting a known colour property
+            if ( !defined $default_palette{$col_prop} ) {
+                print STDERR "'$col_prop' is not something I can colour\n\n";
+                usage();
+            }
+
+            # We need to know if we're setting a background or foreground
+            # colour to generate the right vt100 magic
+            my $is_bg = $col_prop =~ m/-bg$/mxs;
+            my $vt100_colour = make_colour( $attempted_palette{$col_prop},
+                                            $is_bg
+                                          );
+            # make_colour returns negative numbers on error
+            if ( $vt100_colour eq '-1' ) {
+                my $n = $attempted_palette{$col_prop};
+                print STDERR "$n is outside of valid range 0-255)\n\n";
+                usage();
+            }
+            elsif ( $vt100_colour eq '-2' ) {
+                my $n = $attempted_palette{$col_prop};
+                print STDERR "'$n' is not a valid xterm256 colour name\n\n";
+                usage();
+            }
+            elsif ( $vt100_colour eq '-3' ) {
+                my $n = $attempted_palette{$col_prop};
+                print STDERR "'$n' contains an invalid format character. "
+                             . "Valid characters are: b i l s u\n\n";
+                usage();
+            }
+            $opt{'colours'}{$col_prop} = $vt100_colour;
+        }
+    }
+    # Apply defaults and assemble final palette
+    foreach my $col_prop ( keys %default_palette ) {
+        my ( $thing_to_color, $fg_or_bg )
+            = $col_prop =~ m/\A(.*?)-((?:f|b)g)\z/mxs;
+
+        # If we're not in colour mode, then the appropriate vt100 code for this
+        # thing is an empty string and we're done
+        unless( !defined $opt{'use-colour'}
+                || $opt{'use-colour'}
+              ) {
+            $opt{'colours'}{$thing_to_color} = '';
+            next;
+        }
+
+        # If we have a user specified value, use that. Otherwise roll one using
+        # the defaults
+        my $is_bg = ( $fg_or_bg eq 'bg' ) ? 1 : 0;
+        my $vt = ( defined $opt{'colours'}{$col_prop} )
+                 ? $opt{'colours'}{$col_prop}
+                 : make_colour( $default_palette{$col_prop}, $is_bg );
+        $opt{'colours'}{$thing_to_color} .= $vt;
     }
 
     # If we're using borders, fancy up the separators
@@ -202,8 +367,29 @@ sub parse_options {
         $opt{'header-separator-x'} = $opt{'separator-x'};
     }
 
+    # Draw a header separator row if we: have grid mode on, are not using
+    # colour, or we've explicitly been given a string to use for the separator
+    if ( $opt{'draw-row-separator'}
+         || ( defined $opt{'use-colour'} && !$opt{'use-colour'} )
+         || defined $opt{'header-separator'}
+       ) {
+        $opt{'draw-header-separator'} = 1;
+    }
+
+    # If row separators are on and colour is not, if both use the header and
+    # row dividers are '-', the header stops looking different from the content.
+    # Change it to = in that case unless we've been explicitly given a different
+    # separator
+    if ( $opt{'draw-row-separator'}
+         && ( defined $opt{'use-colour'} && !$opt{'use-colour'} )
+         && !defined $opt{'header-separator'}
+       ) {
+        $opt{'header-separator'} = '=';
+    }
+
     # Apply defaults to any unset setting. Have to do this after the initial
-    # parsing because of the utf8 issues
+    # parsing because of utf8 encoding issues (need to encode stuff that comes
+    # in from getopt, but the defaults set in the file are already encoded)
     foreach my $setting ( keys %defs ) {
         $opt{$setting} = $defs{$setting}
             unless ( defined $opt{$setting} );
@@ -218,8 +404,10 @@ sub parse_options {
 }
 
 sub make_colour {
-    # Allow users to define colours by name
-    my %colours = ( 'black'             => 0,
+    my ( $colour_to_parse, $is_bg ) = @_;
+
+    # xterm256 colour name numeric value mappings
+    my %col_map = ( 'black'             => 0,
                     'maroon'            => 1,
                     'green'             => 2,
                     'olive'             => 3,
@@ -475,13 +663,82 @@ sub make_colour {
                     'grey85'            => 253,
                     'grey89'            => 254,
                     'grey93'            => 255,
-                 );
+                  );
+
+    # If we've been passed a format string
+    my $vtfmt = $is_bg ? ''
+                       : "\x1b[29;25;24;23;22m";  # Reset formatting
+    if ( $colour_to_parse =~ m/_/mxs ) {
+        my $format_string;
+        my %format_mapping = ( 'b' => '1', # bold
+                               'i' => '3', # italic
+                               'u' => '4', # underline
+                               'l' => '5', # blink
+                               's' => '9', # strikethrough
+                             );
+        ( $colour_to_parse, $format_string ) = split '_', $colour_to_parse;
+        next if ( $is_bg );  # no text formatting for backgrounds
+        my @formats = split q{}, $format_string;
+        foreach my $format ( @formats ) {
+            return '-3' unless ( defined $format_mapping{$format} );
+            $vtfmt .= "\x1b[$format_mapping{$format}m";
+        }
+    }
+
+    # If we've been passed an RGB value
+    if ( $colour_to_parse =~ m/\A\d{1,3};\d{1,3};\d{1,3}/mxs ) {
+        # Split the string into its red, green and blue components and make
+        # sure they're in range
+        my ( $r, $g, $b ) = map { return -1
+                                      if ( $_ < 0 || $_ > 255 );
+                                  int $_;
+                                }
+                                split ';', $colour_to_parse;
+        return $is_bg ? "$vtfmt\x1b[48;2;$r;$g;${b}m"
+                      : "$vtfmt\x1b[38;2;$r;$g;${b}m";
+    }
+
+    # If we've been passed an integer...
+    if ( $colour_to_parse =~ m/\A\d+\z/mxs) {
+        # ... make sure it's in range
+        return -1
+            if ( $colour_to_parse < 0
+                 || $colour_to_parse > 255
+               );
+    }
+    else {
+        # Otherwise, try to turn the name we've been given into an integer
+        return -2
+            unless ( defined $col_map{lc $colour_to_parse} );
+        $colour_to_parse = $col_map{lc $colour_to_parse};
+    }
+
+    # For the sorry folks whose terms only know about 16 colours
+    if ( $colour_to_parse < 16 ) {
+        my $base_colour = $is_bg ? 40 : 30;
+        if ( $colour_to_parse > 7 ) {
+            $base_colour += 52;
+        }
+        my $bold = ''; #'1;';
+        $colour_to_parse += $base_colour;
+        return "$vtfmt\x1b[${colour_to_parse}m";
+    }
+    # The colours beyond 15 have different vtXXX magic. This form supports
+    # colours 0-15 too, but I'm doing those the other way for maximum
+    # compatibility
+    return ( $is_bg ) ? "$vtfmt\x1b[48;5;${colour_to_parse}m"
+                      : "$vtfmt\x1b[38;5;${colour_to_parse}m";
 }
 
 sub parse_and_print_csv {
+    ###########################################################################
+    #
     # Main loop to process the data
+    #
+    ###########################################################################
     while ( !eof() ) {
         # Each iteration through this loop parses and prints one file
+        my $row_num = 1;
 
         # First, fetch --prefetch lines to calculate column widths
         my ( $rows, $end_reached ) = read_rows($options{'prefetch-lines'});
@@ -507,7 +764,7 @@ sub parse_and_print_csv {
         my @allocated_widths = allocate_column_widths( $writeable_space,
                                                        @column_widths
                                                      );
-        # Add a filename header now if enabled
+        # Add a filename label if enabled
         if ( $options{'print-file-names'} ) {
             my $total_width = 0;
             foreach my $width ( @allocated_widths ) {
@@ -527,40 +784,62 @@ sub parse_and_print_csv {
                 $pad_length = 0;
             }
             my $padding = ' ' x $pad_length;
-            printf( "%${total_width}s\n", "$ARGV$padding" );
+
+            my $col = $options{'colours'}{'file-label'};
+            my $clear = $options{'colours'}{'colour-reset'};
+            printf( "$col%${total_width}s$clear\n", "$ARGV$padding" );
         }
 
         # Print the top of the border if we're doing borders
         if ( $options{'border'} ) {
+            my $border_type = $options{'header'}
+                              ? $options{'colours'}{'header-border'}
+                              : $options{'colours'}{'content-border'};
+            my $pal = { 'border'    => $border_type,
+                        'separator' => $border_type,
+                        'reset'     => $options{'colours'}{'colour-reset'},
+                      };
             print_separator( $options{'border-ul'},
                              $options{'border-top'},
                              $options{'border-top-x'},
                              $options{'border-ur'},
                              \@allocated_widths,
-                             {}
+                             $pal
                            );
         }
 
         # Print a header row if we're doing that sort of thing
         if ( $options{'header'} ) {
             my $header_row = shift @{ $rows };
-            my ( $bl, $br, $blx, $brx ) = ( '', '', '', '' );
+            my ( $bl, $br, $blx, $brx, $vs ) = ( '', '', '', '', '' );
             if ( $options{'border'} ) {
                 $bl  = $options{'border-left'};
                 $br  = $options{'border-right'};
                 $blx = $options{'border-left-hx'};
                 $brx = $options{'border-right-hx'};
             }
+            my $pal = { 'border'   => $options{'colours'}{'header-border'},
+                        'border-x' => $options{'colours'}{'header-separator-border'},
+                        'col-sep'  => $options{'colours'}{'header-column-separator'},
+                        'even-row' => $options{'colours'}{'header'},
+                        'odd-row'  => $options{'colours'}{'header'},
+                        'reset'    => $options{'colours'}{'colour-reset'},
+                        'row-sep'  => $options{'colours'}{'header-separator'}
+                      };
+            if ( $options{'draw-header-separator'} ) {
+                $vs = $options{'header-separator'};
+            }
             print_rows( [ $header_row ],
+                        0,
                         $options{'column-separator'},
-                        $options{'header-separator'},
+                        $vs,
                         $options{'header-separator-x'},
                         $bl,
                         $br,
                         $blx,
                         $brx,
                         \@allocated_widths,
-                        {},
+                        $pal,
                         0
                       );
         }
@@ -578,18 +857,27 @@ sub parse_and_print_csv {
             if ( $options{'draw-row-separator'} ) {
                 $vs = $options{'row-separator'};
             }
-            print_rows( $rows,
-                        $options{'column-separator'},
-                        $vs,
-                        $options{'separator-x'},
-                        $bl,
-                        $br,
-                        $blx,
-                        $brx,
-                        \@allocated_widths,
-                        {},
-                        $end_reached
-                      );
+            my $pal = { 'border'   => $options{'colours'}{'content-border'},
+                        'border-x' => $options{'colours'}{'content-border'},
+                        'col-sep'  => $options{'colours'}{'content-column-separator'},
+                        'even-row' => $options{'colours'}{'content-even-row'},
+                        'odd-row'  => $options{'colours'}{'content-odd-row'},
+                        'reset'    => $options{'colours'}{'colour-reset'},
+                        'row-sep'  => $options{'colours'}{'row-separator'}
+                      };
+            $row_num = print_rows( $rows,
+                                   $row_num,
+                                   $options{'column-separator'},
+                                   $vs,
+                                   $options{'separator-x'},
+                                   $bl,
+                                   $br,
+                                   $blx,
+                                   $brx,
+                                   \@allocated_widths,
+                                   $pal,
+                                   $end_reached
+                                 );
             $rows = [];
 
             # if we're not at the end of the file, read the next line
@@ -632,12 +920,16 @@ sub parse_and_print_csv {
 
         # Print the bottom border if we're doing borders
         if ( $options{'border'} ) {
+            my $pal = { 'border'    => $options{'colours'}{'content-border'},
+                        'separator' => $options{'colours'}{'content-border'},
+                        'reset'     => $options{'colours'}{'colour-reset'},
+                      };
             print_separator( $options{'border-ll'},
                              $options{'border-bottom'},
                              $options{'border-bottom-x'},
                              $options{'border-lr'},
                              \@allocated_widths,
-                             {}
+                             $pal,
                            );
         }
     }
@@ -728,7 +1020,7 @@ sub error {
 }
 
 sub print_rows {
-    my ( $rows, $h_sep, $v_sep, $sep_x, $bl, $br, $blx, $brx,
+    my ( $rows, $row_num, $h_sep, $v_sep, $sep_x, $bl, $br, $blx, $brx,
          $column_widths, $palette, $fin
        ) = @_;
 
@@ -813,9 +1105,19 @@ sub print_rows {
                                        )
                                      . ' ' x $m{'right'};
             }
-            # print the line
-            print $bl . join( $h_sep, @column_slices ) . "$br\n";
+            # print the row
+            my $content_color = $row_num % 2 ? $palette->{'odd-row'}
+                : $palette->{'even-row'};
+
+            my $colsep = $palette->{'col-sep'} . "$h_sep$content_color";
+
+            print $palette->{'border'} . $bl . $content_color
+                  . join( $colsep, @column_slices )
+                  . $palette->{'border'} . $br . $palette->{'reset'} . "\n";
         }
+
+        $row_num++;
+
         # If we have a vertical separator row, print it too unless we're at the
         # last line of a file
         if ( length $v_sep
@@ -823,10 +1125,16 @@ sub print_rows {
                   || scalar @{ $rows }
                 )
            ) {
-            print_separator( $blx, $v_sep, $sep_x, $brx, $column_widths, {} );
+            my $pal = { 'border'    => $palette->{'border-x'},
+                        'separator' => $palette->{'row-sep'},
+                        'reset'     => $palette->{'reset'},
+                      };
+            print_separator( $blx, $v_sep, $sep_x, $brx,
+                             $column_widths, $pal
+                           );
         }
     }
-    return;
+    return $row_num;
 }
 
 sub get_justification {
@@ -838,7 +1146,8 @@ sub print_separator {
     my ( $l, $sep, $sep_x, $r, $col_widths, $palette ) = @_;
 
     my $sep_length = screen_length( $sep );
-    print $l .
+
+    print $palette->{'border'} . $l . $palette->{'separator'} .
           join( $sep_x,
                 map { # Repeat $sep enough to fill the column then trim it to
                       # the column width
@@ -852,7 +1161,7 @@ sub print_separator {
                       $sep_field;
                     } @{ $col_widths }
               )
-          . "$r\n";
+          . $palette->{'border'} . $r . $palette->{'reset'} ."\n";
     return;
 }
 
@@ -985,16 +1294,16 @@ sub wrap_content {
         elsif ( $line =~ m/$up_to_max_greedy\s/mxs ) {
             ( $extracted, $line ) = $line =~ m/($up_to_max_greedy)\s(.*)\z/mxs;
             push @wrapped_lines, $extracted;
-        }
-        # Otherwise try to just chomp stuff off up to the wrap length
-        elsif ( $line =~ m/$up_to_max_greedy/mxs ) {
-            ( $extracted, $line ) = $line =~ m/($up_to_max_greedy)(.*)\z/mxs;
-            push @wrapped_lines, $extracted;
 
             # If we have a single width column, we don't want to eat that last
             # space, otherwise words bleed together in the output.
             push @wrapped_lines, ' '
                 if ( $wrap_length == 1 );
+        }
+        # Otherwise try to just chomp stuff off up to the wrap length
+        elsif ( $line =~ m/$up_to_max_greedy/mxs ) {
+            ( $extracted, $line ) = $line =~ m/($up_to_max_greedy)(.*)\z/mxs;
+            push @wrapped_lines, $extracted;
         }
         # We only get here if the column is too narrow to fix the next
         # character. In this case, just grab and return a single character and

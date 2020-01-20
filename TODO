@@ -1,10 +1,16 @@
 Rewrite usage as a perldoc thing
-Colourize
 Column Justification
-Column Formats
+Column Formats (think prepend a dollar sign and colour it red when negative)
+Autogen row number support
 Tests? Things just work, right? right?
 support for tsv and other arbitrary delimiters
 load default config from file(s)
 force width even when data isn't wide
-add border string customization into getopt
+add border string customization into getopt -- probably rework the border settings into something more like the colour settings
 display a slice of a csv rather than the whole thing
+Deal with the unicode zero-width spaces and tabs in the content
+
+* hits crack pipe *
+Live csv editing
+
+Heck, if when the loading defaults from file thing happens we look for a configuration based on the filename (i.e. when viewing my.csv, load configuration from my.ccsv), then we can pretty much dump excel's feature list into this file.
