@@ -17,7 +17,7 @@ use open IN => ':encoding(console_in)';
 
 # local is needed for counting to work properly through regex backtracking...
 # so we need a global variable to localize
-our $CNT;
+our ( $CNT, $WL );
 
 my %options = parse_options();
 parse_and_print_csv();
@@ -95,7 +95,9 @@ __USAGE__
 }
 
 sub parse_options {
-    my ($wchar, $hchar, $wpixels, $hpixels) = GetTerminalSize();
+    my ( $wchar, $hchar ) = ( 80, 25 );
+    eval { ($wchar, $hchar ) = GetTerminalSize() };
+
     my %opt = ( 'colours' => {} );
     my %defs = ( 'border'                 => 0,
                  'border-ul'              => '',
@@ -1226,23 +1228,21 @@ sub allocate_column_widths {
 
 sub screen_length {
     my $string = shift @_;
-    my $length = 0;
 
-    # We need to count how wide this string will be on screen
-    $string =~
-        m/^(?{ local $CNT = 0; })
-          (?(?=\p{East_Asian_Width: W})     # If we have a wide asian character
-            .(?{ local $CNT = $CNT + 2; })  # Increase the length by 2
-            |.(?{ local $CNT = $CNT + 1; }) # Otherwise by 1
-          )*?$                              # repeat for entire string
-          (?{ $length = $CNT; })  # save the final value to our length
-         /mxs;
-    return $length;
+    # Fetch all the double width characters in the string
+    my @double_wides = $string =~ m/(\p{East_Asian_Width: W})/mxsg;
+
+    # Return the number of double-width characters plus the original length
+    return ( length $string ) + scalar @double_wides;
 }
 
 sub wrap_content {
     my ( $line, $wrap_length ) = @_;
     my @wrapped_lines;
+
+    # Need a global to prevent "variable will not stay shared" warnings in
+    # older versions of perl
+    $WL = $wrap_length;
 
     # So, we need a regular expression that matches text capped at the column
     # width. This is complicated due to double-width characters which prevent
@@ -1254,7 +1254,7 @@ sub wrap_content {
                  .(?{ local $CNT = $CNT + 2; })| # Yes? Bump $CNT by 2
                  .(?{ local $CNT = $CNT + 1; })  # Otherwise by 1
              )+   # Match as much as we can, but at least one
-             (?(?{ $CNT <= $wrap_length; }) # Length less than the wrap length?
+             (?(?{ $CNT <= $WL; }) # Length less than the wrap length?
                  (?=.)|    # If so, any character is ok.
                  (?=A)B    # If not, we'll only be satisfied with an impossible
                            # next character. This will force a backtrack of one
@@ -1268,7 +1268,7 @@ sub wrap_content {
                  .(?{ local $CNT = $CNT + 2; })| # Yes? Bump $CNT by 2
                  .(?{ local $CNT = $CNT + 1; })  # Otherwise by 1
              )+?   # Match as little as we can, but at least one
-             (?(?{ $CNT <= $wrap_length; }) # Length less than the wrap length?
+             (?(?{ $CNT <= $WL; }) # Length less than the wrap length?
                  (?=.)|    # If so, any character is ok.
                  (?=A)B    # If not, nothing is ok. Same as in the greedy land.
              )
