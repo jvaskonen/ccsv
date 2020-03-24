@@ -1158,8 +1158,16 @@ sub print_separator {
                           + $options{'margin-left'}
                           + $options{'margin-right'};
                       my $repeats = int($col_width / $sep_length)+1;
-                      my ( $sep_field )
-                          = ($sep x $repeats) =~ m/(.{$col_width})/mxs;
+
+                      my ( $sep_field ) = wrap_content( ($sep x $repeats),
+                                                        $col_width
+                                                      );
+                      # If we have a column with an odd width, but we have a
+                      # double wide row separator character, then pad with
+                      # a space because I don't have any better idea
+                      $sep_field .= ' '
+                          if ( screen_length($sep_field) != $col_width );
+
                       $sep_field;
                     } @{ $col_widths }
               )
