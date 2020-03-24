@@ -1234,7 +1234,7 @@ sub screen_length {
           (?(?=\p{East_Asian_Width: W})     # If we have a wide asian character
             .(?{ local $CNT = $CNT + 2; })  # Increase the length by 2
             |.(?{ local $CNT = $CNT + 1; }) # Otherwise by 1
-          )*?$                              # repeat for entire string
+          )*\z                              # repeat for entire string
           (?{ $length = $CNT; })  # save the final value to our length
          /mxs;
     return $length;
