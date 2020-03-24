@@ -1251,8 +1251,8 @@ sub wrap_content {
     my $up_to_max_greedy
         = qr/\A(?{ local $CNT = 0; })  # $CNT keeps track of the printed length
              (?(?=\p{East_Asian_Width: W})       # Wide asian character?
-                 .(?{ local $CNT = $CNT + 2; })| # Yes? Bump $CNT by 2
-                 .(?{ local $CNT = $CNT + 1; })  # Otherwise by 1
+                 [^\r\n](?{ local $CNT = $CNT + 2; })| # Yes? Bump $CNT by 2
+                 [^\r\n](?{ local $CNT = $CNT + 1; })  # Otherwise by 1
              )+   # Match as much as we can, but at least one
              (?(?{ $CNT <= $WL; }) # Length less than the wrap length?
                  (?=.)|    # If so, any character is ok.
@@ -1265,8 +1265,8 @@ sub wrap_content {
     my $up_to_max_sparse
         = qr/\A(?{ local $CNT = 0; })  # $CNT keeps track of the printed length
              (?(?=\p{East_Asian_Width: W})       # Wide asian character?
-                 .(?{ local $CNT = $CNT + 2; })| # Yes? Bump $CNT by 2
-                 .(?{ local $CNT = $CNT + 1; })  # Otherwise by 1
+                 [^\r\n](?{ local $CNT = $CNT + 2; })| # Yes? Bump $CNT by 2
+                 [^\r\n](?{ local $CNT = $CNT + 1; })  # Otherwise by 1
              )+?   # Match as little as we can, but at least one
              (?(?{ $CNT <= $WL; }) # Length less than the wrap length?
                  (?=.)|    # If so, any character is ok.
@@ -1277,11 +1277,10 @@ sub wrap_content {
     while ( length $line ) {
         my $nl = qr/\r\n|\r|\n/mxs;
         my $extracted;
-
         # If there's a newline within the wrap length, wrap there
-        if ( $line =~ m/$up_to_max_sparse$nl/mxs ) {
+        if ( $line =~ m/$up_to_max_sparse?$nl/mxs ) {
             ( $extracted, $line )
-                = $line =~ m/($up_to_max_sparse)$nl(.*)\z/mxs;
+                = $line =~ m/($up_to_max_sparse?)$nl(.*)\z/mxs;
             push @wrapped_lines, $extracted;
         }
         # If our line is less than the wrap length, we're done
