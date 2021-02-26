@@ -33,10 +33,13 @@ Options:
     --continue            If an error in encountered parsing a csv file,
                           continue with the next file rather than terminating.
                           Default: false
-    --header -h           Treat the first line of each file as a header row
-                          Default: False
     --csep -s             String used to separate columns
                           Default: ' | '
+    --full-width -F       Display the table at full width even when it is not
+                          required by the content.
+                          Default: false
+    --header -h           Treat the first line of each file as a header row
+                          Default: False
     --hsep                String to be repeated and used as a separator between
                           the header and data rows.
                           Default: Equal to vsep if defined, otherwise '-'
@@ -121,6 +124,7 @@ sub parse_options {
                  'continue-on-error'      => 0,
                  'draw-header-separator'  => 0,
                  'draw-row-separator'     => 0,
+                 'full-width'             => 0,
                  'header'                 => 0,
                  'header-separator-x'     => '+',
                  'margin-left'            => 1,
@@ -204,6 +208,7 @@ sub parse_options {
                 'colour|color|c!'     => \$opt{'use-colour'},
                 'csep|s=s'            => \$opt{'column-separator'},
                 'continue|t'          => \$opt{'continue-on-error'},
+                'full-width|F'        => \$opt{'full-width'},
                 'grid|g!'             => \$opt{'draw-row-separator' },
                 'header|h!'           => \$opt{'header'},
                 'hsepx=s'             => \$opt{'header-separator-x'},
@@ -1223,7 +1228,9 @@ sub allocate_column_widths {
         my $made_adjustments = 0;
         foreach my $col_no ( @column_order ) {
             if ( $total_allocated < $total_scr_width
-                 && $allocated_widths[$col_no] < $column_sizes[$col_no]
+                 && ( $allocated_widths[$col_no] < $column_sizes[$col_no]
+                      || $options{'full-width'}
+                    )
                ) {
                 $allocated_widths[$col_no]++;
                 $total_allocated++;
