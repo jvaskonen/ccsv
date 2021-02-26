@@ -107,7 +107,7 @@ fi
 
 if [ -z "${columns}" ]
 then
-    ACTIVITY_COLUMNS="pid, datname, usename, now() - query_start as age, query"
+    ACTIVITY_COLUMNS="pid, datname, usename, date_trunc('milliseconds',now() - query_start) as age, query"
     # By default order by the age of the running query
     if [ -z "${ORDERBY}" ]
     then
