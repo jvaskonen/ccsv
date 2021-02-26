@@ -17,7 +17,7 @@ use open IN => ':encoding(console_in)';
 
 # local is needed for counting to work properly through regex backtracking...
 # so we need a global variable to localize
-our ( $CNT, $WL );
+our ( $CNT, $WL, $TW );
 
 my %options = parse_options();
 parse_and_print_csv();
@@ -88,6 +88,8 @@ Options:
                           Default: row separation off
     --sepx -x             String used between columns on a separator row
                           Default: '-+-'
+    --tab-width           Set the tab width
+                          Default: 8
     --width -w            Width to wrap the output to
                           Default: terminal width
 __USAGE__
@@ -130,6 +132,7 @@ sub parse_options {
                  'row-separator'          => '-',
                  'separator-x'            => '+',
                  'header-separator'       => '-',
+                 'tab-width'              => 8,
                  'width'                  => $wchar,
               );
     my %border_defs = ( 'border-ul'              => '┌',
@@ -217,6 +220,7 @@ sub parse_options {
                 'sepx|x=s'            => \$opt{'separator-x'},
                 'quiet|q'             => \$opt{'quiet'},
                 'right|r=s'           => \$opt{'right-justify-columns'},
+                'tab-width=i'         => \$opt{'tab-width'},
                 'width|w=i'           => \$opt{'width'},
               ) || usage();
 
@@ -1235,13 +1239,14 @@ sub allocate_column_widths {
 }
 
 sub screen_length {
-    my $string = shift @_;
+    my $string = expand_tabs( shift @_ );
 
     # Fetch all the double width characters in the string
     my @double_wides = $string =~ m/(\p{East_Asian_Width: W})/mxsg;
 
     # Return the number of double-width characters plus the original length
-    return ( length $string ) + scalar @double_wides;
+    return ( length $string )
+           + scalar @double_wides;
 }
 
 sub wrap_content {
@@ -1251,6 +1256,7 @@ sub wrap_content {
     # Need a global to prevent "variable will not stay shared" warnings in
     # older versions of perl
     $WL = $wrap_length;
+    $TW = $options{'tab-width'};
 
     # So, we need a regular expression that matches text capped at the column
     # width. This is complicated due to double-width characters which prevent
@@ -1260,7 +1266,11 @@ sub wrap_content {
         = qr/\A(?{ local $CNT = 0; })  # $CNT keeps track of the printed length
              (?(?=\p{East_Asian_Width: W})       # Wide asian character?
                  [^\r\n](?{ local $CNT = $CNT + 2; })| # Yes? Bump $CNT by 2
-                 [^\r\n](?{ local $CNT = $CNT + 1; })  # Otherwise by 1
+                 (?(?=\t)  # If not, do we have a tab?
+                   # If so increment $CNT to the next tab stop
+                   \t(?{ local $CNT = $CNT + $TW - ($CNT % $TW) })|
+                   [^\r\n](?{ local $CNT = $CNT + 1; })  # Otherwise by 1
+                 )
              )+   # Match as much as we can, but at least one
              (?(?{ $CNT <= $WL; }) # Length less than the wrap length?
                  (?=.)|    # If so, any character is ok.
@@ -1274,7 +1284,11 @@ sub wrap_content {
         = qr/\A(?{ local $CNT = 0; })  # $CNT keeps track of the printed length
              (?(?=\p{East_Asian_Width: W})       # Wide asian character?
                  [^\r\n](?{ local $CNT = $CNT + 2; })| # Yes? Bump $CNT by 2
-                 [^\r\n](?{ local $CNT = $CNT + 1; })  # Otherwise by 1
+                 (?(?=\t)  # If not is the next char a tab
+                   # If so, bump to the next tab stop
+                   \t(?{ local $CNT = $CNT + $TW - ( $CNT % $TW )})|
+                   [^\r\n](?{ local $CNT = $CNT + 1; })  # Otherwise by 1
+                 )
              )+?   # Match as little as we can, but at least one
              (?(?{ $CNT <= $WL; }) # Length less than the wrap length?
                  (?=.)|    # If so, any character is ok.
@@ -1285,22 +1299,34 @@ sub wrap_content {
     while ( length $line ) {
         my $nl = qr/\r\n|\r|\n/mxs;
         my $extracted;
-        # If there's a newline within the wrap length, wrap there
-        if ( $line =~ m/$up_to_max_sparse?$nl/mxs ) {
+        # If the line starts with a newline, just wrap
+        if ( $line =~ m/^$nl/ ) {
             ( $extracted, $line )
-                = $line =~ m/($up_to_max_sparse?)$nl(.*)\z/mxs;
-            push @wrapped_lines, $extracted;
+                = $line =~ m/($nl)(.*)\z/mxs;
+            push @wrapped_lines, '';
+        }
+        # If there's a newline within the wrap length, wrap there
+        elsif ( $line =~ m/$up_to_max_sparse$nl/mxs ) {
+            ( $extracted, $line )
+                = $line =~ m/($up_to_max_sparse)$nl(.*)\z/mxs;
+            push @wrapped_lines, expand_tabs($extracted);
+
+            # If we have a single width column and the next character isn't a
+            # space, replace the newline we just deleted with a space to
+            # prevent words from bleeding together.
+            push @wrapped_lines, ' '
+                if ( $wrap_length == 1 && $line !~ '\A\s' );
         }
         # If our line is less than the wrap length, we're done
         elsif ( screen_length( $line ) <= $wrap_length ) {
             chomp $line;
-            push @wrapped_lines, $line;
+            push @wrapped_lines, expand_tabs($line);
             $line = '';
         }
         # If there's whitespace within the wrap length, wrap at the last
         elsif ( $line =~ m/$up_to_max_greedy\s/mxs ) {
             ( $extracted, $line ) = $line =~ m/($up_to_max_greedy)\s(.*)\z/mxs;
-            push @wrapped_lines, $extracted;
+            push @wrapped_lines, expand_tabs($extracted);
 
             # If we have a single width column, we don't want to eat that last
             # space, otherwise words bleed together in the output.
@@ -1310,7 +1336,7 @@ sub wrap_content {
         # Otherwise try to just chomp stuff off up to the wrap length
         elsif ( $line =~ m/$up_to_max_greedy/mxs ) {
             ( $extracted, $line ) = $line =~ m/($up_to_max_greedy)(.*)\z/mxs;
-            push @wrapped_lines, $extracted;
+            push @wrapped_lines, expand_tabs($extracted);
         }
         # We only get here if the column is too narrow to fix the next
         # character. In this case, just grab and return a single character and
@@ -1321,4 +1347,16 @@ sub wrap_content {
         }
     }
     return @wrapped_lines;
+}
+
+sub expand_tabs {
+    my $text = shift @_;
+    my $tw = $options{'tab-width'};
+    # While there are any tabs in the text
+    while ( $text =~ m/\t/mxs ) {
+        # Find the first tab, and replace it with enough spaces to get us to
+        # the next tab stop
+        $text =~ s/^(.*?)\t/$1 . ' ' x ( $tw - (screen_length($1)%$tw) )/mxsxe;
+    }
+    return $text;
 }
