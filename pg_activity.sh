@@ -1,8 +1,12 @@
 #!/bin/bash
 
-while getopts "U:u:d:h:x:l:o:p:c:i" o; do
+SORT_DIR=DESC
+
+while getopts "U:u:d:h:x:l:o:p:c:ia" o; do
   case "${o}" in
     U) user=${OPTARG}
+       ;;
+    a) SORT_DIR=ASC
        ;;
     c) columns=${OPTARG}
        ;;
@@ -32,6 +36,7 @@ USAGE:
 $0 [options]
 Options:
   -U  The database user that should perform the activity query
+  -a  Sort results in ascending rather than decending order
   -c  The list of pg_stat_activity columns you wish to include
       in the output. You may also use 'age' and 'txn_age' to
       get the query and transation start times relative to the
@@ -75,7 +80,7 @@ fi
 
 if [ ! -z "${exclude_user}" ]
 then
-    EXCLUDE_FILTER="\n      AND usename != '$exclude_user'"
+    EXCLUDE_FILTER="\n      AND usename NOT IN ('$(echo $exclude_user | sed "s/,/','/")')"
 fi
 
 if [ -z "${show_idle}" ]
@@ -129,7 +134,7 @@ COPY (
   FROM pg_stat_activity
   WHERE
       $IDLE_FILTER $DB_FILTER $USER_FILTER $EXCLUDE_FILTER
-  ORDER BY $ORDERBY
+  ORDER BY $ORDERBY $SORT_DIR
   $LIMIT
 ) TO STDOUT WITH CSV HEADER
 __ACTIVITY_QUERY__
