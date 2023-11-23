@@ -54,10 +54,10 @@ Options:
     --max-line-length -o  Abort parsing a csv if the line length exceeds the
                           specified value.
                           Default: 1,000,000
-    --palette -p          Format is <item1>=<colour1>_<format>[,<item2>=...]
+    --palette -p          Format is <item1>=<colour1>[_<format>][,<item2>=...]
                           There is an *-fg and *-bg for each of the following:
                               border    column-separator     content-border
-                              content-column-separator-bg    content-even-row
+                              content-column-separator       content-even-row
                               content-odd-row   file-label   header
                               header-border     header-column-separator
                               header-separator  header-separator-border
@@ -73,6 +73,9 @@ Options:
                           Valid formats characters are: b (bold), i (italic),
                           l (blink), s (strikethrough) and u (underline). Not
                           all formats are implemented by all terminals.
+
+                          Formats may only be applied to foreground entries and
+                          are ignored for background values.
 
                           Example: -p'header-fg=blue_b' sets the header text to
                           be bold blue
@@ -688,11 +691,13 @@ sub make_colour {
                                's' => '9', # strikethrough
                              );
         ( $colour_to_parse, $format_string ) = split '_', $colour_to_parse;
-        next if ( $is_bg );  # no text formatting for backgrounds
-        my @formats = split q{}, $format_string;
-        foreach my $format ( @formats ) {
-            return '-3' unless ( defined $format_mapping{$format} );
-            $vtfmt .= "\x1b[$format_mapping{$format}m";
+         # no text formatting for backgrounds
+        unless ( $is_bg ) {
+            my @formats = split q{}, $format_string;
+            foreach my $format ( @formats ) {
+                return '-3' unless ( defined $format_mapping{$format} );
+                $vtfmt .= "\x1b[$format_mapping{$format}m";
+            }
         }
     }
 
