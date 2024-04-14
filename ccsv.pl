@@ -34,7 +34,7 @@ Options:
                           continue with the next file rather than terminating.
                           Default: false
     --csep -s             String used to separate columns
-                          Default: ' | '
+                          Default: '|'
     --full-width -F       Display the table at full width even when it is not
                           required by the content.
                           Default: false
@@ -323,7 +323,7 @@ sub parse_options {
         }
     }
     # Apply defaults and assemble final palette
-    foreach my $col_prop ( keys %default_palette ) {
+    foreach my $col_prop ( sort keys %default_palette ) {
         my ( $thing_to_color, $fg_or_bg )
             = $col_prop =~ m/\A(.*?)-((?:f|b)g)\z/mxs;
 
